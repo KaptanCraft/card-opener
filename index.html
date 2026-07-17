@@ -436,6 +436,13 @@
         transition: opacity 300ms ease, transform 300ms ease;
       }
 
+      .cards.single-reveal {
+        width: min(360px, 86vw);
+        grid-template-columns: 1fr;
+        gap: 0;
+        padding: 0;
+      }
+
       .cards.visible {
         opacity: 1;
         pointer-events: auto;
@@ -457,6 +464,19 @@
         animation: reveal 760ms cubic-bezier(0.18, 0.9, 0.2, 1) forwards;
         animation-delay: var(--delay);
         z-index: var(--z);
+      }
+
+      .single-reveal .card {
+        width: min(330px, 82vw);
+        justify-self: center;
+        cursor: pointer;
+        animation: singleCardIn 520ms cubic-bezier(0.18, 0.9, 0.2, 1) forwards;
+        animation-delay: 0ms;
+        transform: translateY(-24px) scale(0.94);
+      }
+
+      .single-reveal .card.leaving {
+        animation: singleCardOut 260ms ease forwards;
       }
 
       .card::before {
@@ -674,6 +694,24 @@
       @keyframes shine {
         to {
           transform: translateX(110%);
+        }
+      }
+
+      @keyframes singleCardIn {
+        0% {
+          opacity: 0;
+          transform: translateY(-46px) scale(0.9) rotate(0deg);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0) scale(1) rotate(var(--tilt));
+        }
+      }
+
+      @keyframes singleCardOut {
+        to {
+          opacity: 0;
+          transform: translateY(90px) scale(0.88) rotate(var(--tilt));
         }
       }
 
@@ -1119,6 +1157,8 @@
       const keptCards = new Map();
       const MAX_KEPT_CARDS = 5;
       let isOpening = false;
+      let revealQueue = [];
+      let revealIndex = 0;
 
       const coinsEl = document.querySelector("#coins");
       const openedEl = document.querySelector("#openedCount");
@@ -1165,7 +1205,7 @@
         const card = {
           ...player,
           tilt: `${(Math.random() * 6 - 3).toFixed(1)}deg`,
-          delay: `${index * 430}ms`,
+          delay: "0ms",
           z: 20 - index,
         };
         return card;
@@ -1272,7 +1312,9 @@
         collectionValueEl.textContent = formatValue(totalValue);
         renderLeaderboard();
         openButton.disabled = isOpening || coins < packs[selectedPack].price;
-        openButton.textContent = isOpening ? "Kartlar geliyor..." : (coins < packs[selectedPack].price ? "Yetersiz Bakiye" : "Paketi Aç");
+        openButton.textContent = isOpening
+          ? (revealQueue.length ? `Kart ${Math.min(revealIndex + 1, 7)}/7` : "Kartlar geliyor...")
+          : (coins < packs[selectedPack].price ? "Yetersiz Bakiye" : "Paketi Aç");
       }
 
       function showGame() {
@@ -1365,10 +1407,11 @@
         if (isOpening || coins < pack.price) return;
         isOpening = true;
         openButton.disabled = true;
-        openButton.textContent = "Kartlar geliyor...";
+        openButton.textContent = "Kart 1/7";
         coins -= pack.price;
         opened += 1;
         cardsEl.classList.remove("visible");
+        cardsEl.classList.remove("single-reveal");
         packVisual.classList.remove("opening");
         packVisual.style.display = "grid";
         updateHud();
@@ -1377,23 +1420,59 @@
           packVisual.classList.add("opening");
           setTimeout(() => {
             const usedNames = new Set();
-            const cards = Array.from({ length: 7 }, (_, index) => makeCard(index, usedNames));
-            cardsEl.innerHTML = cards.map(renderCard).join("");
+            revealQueue = Array.from({ length: 7 }, (_, index) => makeCard(index, usedNames));
+            revealIndex = 0;
             packVisual.style.display = "none";
+            cardsEl.classList.add("single-reveal");
             cardsEl.classList.add("visible");
-            cards.forEach((card) => {
-              recent.unshift(card);
-              if (!best || rarities[card.rarity].score > rarities[best].score) best = card.rarity;
-            });
-            recent.splice(12);
-            renderHistory();
+            showRevealCard();
             updateHud();
-            setTimeout(() => {
-              isOpening = false;
-              updateHud();
-            }, 3420);
           }, 520);
         });
+      }
+
+      function showRevealCard() {
+        const card = revealQueue[revealIndex];
+        if (!card) {
+          finishRevealQueue();
+          return;
+        }
+        openButton.textContent = `Kart ${revealIndex + 1}/7`;
+        cardsEl.innerHTML = renderCard(card);
+      }
+
+      function finishRevealQueue() {
+        revealQueue.forEach((card) => {
+          recent.unshift(card);
+          if (!best || rarities[card.rarity].score > rarities[best].score) best = card.rarity;
+        });
+        recent.splice(12);
+        renderHistory();
+        revealQueue = [];
+        revealIndex = 0;
+        isOpening = false;
+        cardsEl.classList.remove("single-reveal");
+        cardsEl.classList.remove("visible");
+        cardsEl.innerHTML = "";
+        packVisual.style.display = "grid";
+        packVisual.classList.remove("opening");
+        updateHud();
+      }
+
+      function revealNextCard() {
+        if (!isOpening || !revealQueue.length) return;
+        const currentCard = cardsEl.querySelector(".card");
+        if (currentCard?.classList.contains("leaving")) return;
+        if (!currentCard) {
+          finishRevealQueue();
+          return;
+        }
+        currentCard.classList.add("leaving");
+        setTimeout(() => {
+          revealIndex += 1;
+          showRevealCard();
+          updateHud();
+        }, 260);
       }
 
       document.querySelector("#packList").addEventListener("click", (event) => {
@@ -1409,7 +1488,12 @@
       document.querySelector("#openButton").addEventListener("click", openPack);
       cardsEl.addEventListener("click", (event) => {
         const button = event.target.closest(".keep-button");
-        if (button) toggleKeptCard(button.dataset.cardName);
+        if (button) {
+          event.stopPropagation();
+          toggleKeptCard(button.dataset.cardName);
+          return;
+        }
+        if (event.target.closest(".card")) revealNextCard();
       });
       collectionEl.addEventListener("click", (event) => {
         const button = event.target.closest(".remove-button");
@@ -1420,10 +1504,14 @@
         opened = 0;
         best = null;
         recent.length = 0;
+        revealQueue = [];
+        revealIndex = 0;
+        isOpening = false;
         keptCards.clear();
         saveKeptCards();
         cardsEl.innerHTML = "";
         cardsEl.classList.remove("visible");
+        cardsEl.classList.remove("single-reveal");
         packVisual.style.display = "grid";
         packVisual.classList.remove("opening");
         renderCollection();
